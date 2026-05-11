@@ -77,6 +77,32 @@ Then run **Developer: Reload Window**.
   - `opus-critic` requests `claude-opus-4-7`
   - `inherit-critic` inherits the parent model
 
+## How Context Reaches Critics
+
+Cursor subagents start with a **clean context**. They cannot see the parent chat history, your earlier corrections, project rules, system instructions, or what tools the parent agent already ran. The Cursor docs are explicit:
+
+> "Subagents start with a clean context. The parent agent includes relevant information in the prompt since subagents don't have access to prior conversation history."
+
+This is the single biggest failure mode of multi-model review. A critic that did not receive your actual intent, the accepted plan, and the approaches you explicitly turned down will keep re-recommending those rejected approaches, drift toward generic engineering critique, and find infinite "edge cases" in every diff round.
+
+This plugin solves the constraint by writing your context to disk in `.adversarial-review/` before launching critics:
+
+| File | Purpose |
+| --- | --- |
+| `USER_INTENT.md` | Verbatim user quotes — original request, corrections, success criteria, scope boundaries. No paraphrasing. |
+| `FORBIDDEN_FINDINGS.md` | Approaches you explicitly rejected, with quotes. Critics MUST drop findings that re-propose these. |
+| `PLAN_ACCEPTED.md` | The plan you accepted (path or inline), with acceptance evidence and per-item status. |
+| `DIFF.patch` | The actual `git diff` critics should review. |
+| `FILES_TO_READ_WHOLE.txt` | Files critics MUST read end-to-end (governance docs, the plan, shared interfaces). |
+| `TESTS.txt` | Exact test command + output, or an explicit "tests not needed because…". |
+| `DECIDED_TRADEOFFS.md` | Tradeoffs already accepted in this scope. Critics drop findings that re-litigate. |
+| `RUNTIME.md` (optional) | Server-restart status, log timestamps, migration state, credentials. |
+| `round.txt` | Auto-incremented round counter. After round 2, the skill halts and asks for explicit user confirmation before launching more critics — closes the "infinite findings" attractor. |
+
+Every critic has a **mandatory pre-flight check**: it reads these files first, and returns `INSUFFICIENT EVIDENCE` if any mandatory file is missing or empty. This is fail-closed: no critic can silently "guess what the user wanted" anymore.
+
+If you do not want `.adversarial-review/` checked into git, add it to `.gitignore` once.
+
 ## Review Verdicts
 
 The skill asks the parent agent to return one of these verdicts:
@@ -99,14 +125,17 @@ model: claude-opus-4-7
 
 Cursor may fall back if a model is unavailable on your plan, region, team policy, or Max Mode settings.
 
+> **Honest disclaimer.** If your Cursor plan does not include `gemini-3-1-pro`, `gpt-5-5`, and `claude-opus-4-7`, or Max Mode is off, the named critics **silently fall back to the parent model**. In that case all three critics run on the same model, and the multi-model premise dissolves — you get one model with three different system prompts, not three independent perspectives. If you cannot verify your Cursor plan covers all three model IDs in Max Mode, use 2–3 invocations of `inherit-critic` with different review angles instead, or enable Max Mode.
+
 Cursor's documented subagent frontmatter does **not** include separate `reasoning_effort`, `max_tokens`, or `context_length` fields. This plugin asks critics to use the maximum available effort/context in their prompts. For the biggest context window, turn on **Max Mode** in Cursor before running the review.
 
-Use `inherit-critic` when you want the critic to inherit the exact parent model and Max Mode state.
+Use `inherit-critic` when you want the critic to inherit the exact parent model and Max Mode state, or as the reliable fallback when named models are blocked.
 
 ## Known Limitations
 
 - This uses more tokens and takes longer than normal review.
-- Subagents start with clean context. Give them the task, diff, files, logs, and constraints.
-- Exact model IDs can change or be unavailable. Keep `inherit-critic` as the stable fallback.
+- Subagents start with clean context — see the **How Context Reaches Critics** section above for the `.adversarial-review/` files the parent must write so critics have anything to work with.
+- Exact model IDs can change or be unavailable. Without Max Mode, named critics silently fall back to the parent model. Keep `inherit-critic` as the stable fallback.
 - The skill slash form `/adversarial-multimodel-review` depends on Cursor 2.4+ skill discovery. Use `/mm-review` if the skill slash entry is not visible.
 - Static review cannot prove deployment safety. If runtime was not restarted or logs are stale, require a runtime check.
+- Open-ended adversarial critique on a constantly-changing diff has no natural stopping point. The skill caps automatic critic rounds at 2 per scope-stable commit and escalates to the user before round 3.
