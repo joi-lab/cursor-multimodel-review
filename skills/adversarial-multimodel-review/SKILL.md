@@ -12,6 +12,21 @@ The goal is not to generate more opinions. The goal is to reconstruct the real t
 
 This skill is intentionally expensive by default. Independent critics matter most for high-stakes work, so this workflow always optimizes for correctness over speed, cost, and brevity.
 
+## Architectural Constraint You Must Respect
+
+Cursor subagents start with a **clean context**. They cannot see the parent chat history, prior tool outputs, system instructions, project rules, the user's earlier corrections, or the parent agent's TodoWrite. The Cursor docs are explicit about this:
+
+> "Subagents start with a clean context. The parent agent includes relevant information in the prompt since subagents don't have access to prior conversation history."
+
+This is the single biggest failure mode of multi-model review. A critic that did not receive the user's actual intent, accepted plan, and explicitly-rejected approaches will:
+
+- Re-recommend approaches the user already turned down.
+- Treat "the user wanted less code" as scope-creep removal.
+- Find infinite edge cases in any code, because every diff has edges.
+- Drift away from the user's real success criteria toward generic engineering critique.
+
+This skill solves that constraint by **writing the parent context to files on disk** that critics MUST read before producing findings.
+
 ## Trigger Phrases
 
 Apply this skill when the user asks things like:
@@ -42,63 +57,215 @@ This skill always runs a deep, full-context adversarial review. There is no ligh
 
 ## Workflow
 
-1. Reconstruct the assignment:
-   - User request and later corrections.
-   - Agent plan and implementation summary.
-   - Current diff, staged changes, relevant files, tests, logs, docs, rules, and runtime state.
-   - Any explicit caveats such as stale logs or runtime not restarted.
+### Step 1. Convergence Guard (Run First)
 
-2. Build an evidence packet before launching critics. Include:
-   - Original request and later corrections.
-   - Acceptance criteria or the expected behavior.
-   - Implementation summary from the previous agent.
-   - Current `git status`, diff summary, and relevant diff excerpts.
-   - Key files and why they matter.
-   - Test commands and exact results, including skipped or failed checks.
-   - Runtime/log evidence with timestamps.
-   - Known caveats such as stale logs, runtime not restarted, missing credentials, or unavailable commands.
-   - Target decision: commit, merge, deploy, or continue implementation.
+Before assembling anything, check `.adversarial-review/round.txt`. If it exists and shows a round count ≥ 3 on a substantively similar diff, **halt** and ask the user:
 
-3. Launch critic subagents in parallel when available:
-   - `gemini-critic` for broad-context alternative reasoning.
-   - `gpt-critic` for rigorous implementation and regression review.
-   - `opus-critic` for deep architectural and intent review.
-   - `inherit-critic` when exact model IDs are unavailable or the user has selected a specific parent model.
+> "This is round N of adversarial review on a similar diff. Each round tends to find new edge cases in the previous round's fixes — that is the structure of any open-ended critic search, not new bugs. Confirm one of:
+> (a) accept residual tradeoffs and commit now,
+> (b) freeze scope now and commit; iterate on remaining items in a follow-up commit,
+> (c) continue one more round on a specific named concern (state it)."
 
-4. Give each critic the same evidence packet:
-   - Original task and constraints.
-   - What the previous agent claims changed.
-   - Files, diffs, logs, tests, and docs to inspect.
-   - Known limitations, for example "runtime has not been restarted" or "logs may be stale."
-   - A request to verify from source, not from summaries.
-   - A requirement to return `INSUFFICIENT EVIDENCE` instead of guessing when task, diff, or test evidence is missing.
+Do not auto-launch critics if the round count would exceed 2 without explicit user confirmation. If `round.txt` does not exist, treat this as round 1. Increment and write the round number after every full review pass.
 
-5. Synthesize the reviews:
-   - Treat every critic finding as untrusted until checked against code or logs.
-   - Merge duplicate findings.
-   - Highlight disagreements and decide which side has better evidence.
-   - Separate blockers from nice-to-have improvements.
+### Step 2. Write the Evidence Packet to Files
 
-6. Return a final readiness decision:
-   - `BLOCK`: serious correctness, data, security, or deploy risk.
-   - `FIX FIRST`: likely safe after targeted fixes.
-   - `SAFE TO COMMIT`: code is ready to commit, with any minor caveats.
-   - `SAFE TO DEPLOY AFTER RUNTIME CHECK`: code can be committed, but deployment needs restart, smoke test, or live verification.
-   - `INSUFFICIENT EVIDENCE`: the reviewer lacked enough task, diff, test, or runtime evidence to make a reliable call.
+The evidence packet lives on disk in `.adversarial-review/`. Critics will read these files via Read/Grep. Do not rely on the initial Task prompt to carry context — keep that prompt short and point critics at files.
 
-## Critic Checklist
+Create the directory and write the following files. Each file is mandatory unless explicitly marked optional. Use the exact filenames so critics know where to look.
 
-Each critic must answer:
+#### `.adversarial-review/USER_INTENT.md`
 
-- Did the implementation satisfy the user's actual request, including follow-up comments?
-- Does the plan still make sense after reading the final code?
+Verbatim user quotes that define this task. **No paraphrasing.** Include:
+
+- The original user request (full text or the relevant section).
+- Later corrections, in chronological order, each prefixed with a timestamp or turn marker.
+- Explicit success criteria the user stated.
+- Explicit scope boundaries the user stated.
+
+Template:
+
+```markdown
+## Original Request
+> [verbatim user text]
+
+## Corrections And Constraints (chronological)
+- turn N: > [verbatim user text]
+- turn M: > [verbatim user text]
+
+## Stated Success Criteria
+- [exact phrasing]
+
+## Stated Scope Boundaries
+- IN scope: [...]
+- OUT of scope: [...]
+```
+
+If you cannot quote the user verbatim because the chat has been compacted, say so explicitly at the top of the file. Critics will treat that as a confidence limit.
+
+#### `.adversarial-review/FORBIDDEN_FINDINGS.md`
+
+Approaches the user has explicitly rejected, with quotes. Critics MUST drop any finding that re-proposes anything in this file.
+
+Template:
+
+```markdown
+## Rejected Approaches
+- Approach: [name]
+  - Quote: > [verbatim user text rejecting it]
+  - Do NOT recommend this in findings.
+
+## Out-Of-Scope Items For This Review
+- [item]: user said this is a separate follow-up.
+
+## Anti-Patterns The User Called Out
+- [pattern]: > [verbatim user text]
+```
+
+If empty, write `(none — user has not explicitly rejected any approach in this conversation)`. An empty file is OK; a missing file is not.
+
+#### `.adversarial-review/PLAN_ACCEPTED.md`
+
+Pointer to the plan the user accepted (if any). Critics use this to detect "implementation does less/more than plan".
+
+Template:
+
+```markdown
+## Accepted Plan
+- Source: [.cursor/plans/<plan>.plan.md OR inline quote]
+- Acceptance evidence: > [user quote accepting the plan]
+
+## Plan Items Status
+- [done] item 1
+- [done] item 2
+- [deferred-to-next-commit] item 3
+- [explicitly-dropped] item 4 (user quote: > [...])
+```
+
+If no plan was accepted, write `(no formal plan — see USER_INTENT.md for direct requirements)`.
+
+#### `.adversarial-review/DIFF.patch`
+
+Raw output of `git diff <base>..HEAD` (or `git diff --cached` if reviewing a staged-only change). Use the actual base ref the user is shipping against, not a guess.
+
+#### `.adversarial-review/FILES_TO_READ_WHOLE.txt`
+
+One file path per line. These are files critics MUST read end-to-end (not snippets) before reviewing. Include:
+
+- Project governance docs: `BIBLE.md`, `docs/ARCHITECTURE.md`, `docs/DEVELOPMENT.md`, `docs/CHECKLISTS.md` if they exist.
+- The accepted plan file if it lives in the repo.
+- Shared interface files touched by the diff (`*/contracts/*`, `*/api/*`, schema files).
+- Any prompt, rule, or config file the diff touches.
+
+#### `.adversarial-review/TESTS.txt`
+
+Exact test command and exact tail of output. Format:
+
+```text
+## Command
+python -m pytest -q
+
+## Result
+[exit code, last ~40 lines]
+```
+
+If tests were not run, state why and which test command would be appropriate. Critics will treat "tests not run" as a confidence limit, not as automatic failure.
+
+#### `.adversarial-review/DECIDED_TRADEOFFS.md`
+
+Tradeoffs the user has already accepted in this scope. Critics drop findings that re-litigate these.
+
+Template:
+
+```markdown
+## Accepted Tradeoffs
+- Tradeoff: [name]
+  - Cost: [what we lose]
+  - Justification: [why this is OK]
+  - User confirmation: > [user quote or "implicit via plan acceptance"]
+```
+
+#### `.adversarial-review/RUNTIME.md` (optional but recommended)
+
+Runtime / deployment state evidence with timestamps:
+
+- Server restarted: yes/no, at HH:MM
+- Latest logs reviewed: path + range
+- Migrations applied: yes/no
+- Credentials available: yes/no
+- Known stale evidence: list
+
+### Step 3. Optional Pre-Critic Mapping With `explore`
+
+If the diff touches shared interfaces, use Cursor's built-in `explore` subagent to find every reader/writer/caller. Save its output as `.adversarial-review/RELATED_SURFACES.md`. Critics will use this to verify "cross-file consistency" instead of taking that claim on faith.
+
+### Step 4. Launch Critic Subagents In Parallel
+
+Launch in a single message with multiple Task tool calls:
+
+- `gemini-critic` for broad-context alternative reasoning.
+- `gpt-critic` for rigorous implementation and regression review.
+- `opus-critic` for deep architectural and intent review.
+- `inherit-critic` when exact model IDs are unavailable, Max Mode is off, or the user has selected a specific parent model.
+
+Each critic prompt should be **short**. Do not duplicate the evidence packet inline. The prompt should:
+
+1. Point at `.adversarial-review/` and require the critic to read its mandatory pre-flight files.
+2. Name the target decision (commit / merge / deploy / continue iteration).
+3. Name any known limitations (stale logs, runtime not restarted, missing credentials).
+
+Example critic prompt:
+
+```text
+Review the diff at .adversarial-review/DIFF.patch.
+
+MANDATORY pre-flight (return INSUFFICIENT EVIDENCE if missing):
+- .adversarial-review/USER_INTENT.md
+- .adversarial-review/FORBIDDEN_FINDINGS.md
+- .adversarial-review/PLAN_ACCEPTED.md
+- .adversarial-review/TESTS.txt
+
+Read whole files listed in .adversarial-review/FILES_TO_READ_WHOLE.txt.
+
+Target decision: commit.
+Known limitation: runtime has not been restarted yet.
+
+Apply your normal checklist. Drop any finding that re-proposes an approach in FORBIDDEN_FINDINGS.md or asks to re-litigate a tradeoff in DECIDED_TRADEOFFS.md.
+```
+
+### Step 5. Synthesize The Reviews
+
+- Treat every critic finding as untrusted until checked against code or logs.
+- Cross-check every "hard blocker" finding against `USER_INTENT.md` and `FORBIDDEN_FINDINGS.md`. If a finding re-proposes a rejected approach, drop it from blockers and note the disagreement.
+- Merge duplicate findings.
+- Highlight disagreements and decide which side has better evidence.
+- Separate `Hard Blockers` (would block teammate's commit at code review) from `Soft Suggestions` (nice-to-have, not commit-blocking).
+- Increment `.adversarial-review/round.txt`.
+
+### Step 6. Return The Final Readiness Decision
+
+- `BLOCK`: serious correctness, data, security, or deploy risk.
+- `FIX FIRST`: likely safe after targeted fixes.
+- `SAFE TO COMMIT`: code is ready to commit, with any minor caveats.
+- `SAFE TO DEPLOY AFTER RUNTIME CHECK`: code can be committed, but deployment needs restart, smoke test, or live verification.
+- `INSUFFICIENT EVIDENCE`: the reviewer lacked enough task, diff, test, or runtime evidence to make a reliable call.
+
+## Critic Checklist (orientation; per-critic file has authoritative version)
+
+Each critic answers:
+
+- Did the implementation satisfy the user's actual request in `USER_INTENT.md`, including follow-up corrections?
+- Does the plan in `PLAN_ACCEPTED.md` still make sense after reading the final code?
+- Does any candidate finding re-propose something in `FORBIDDEN_FINDINGS.md`? (If yes, drop it.)
+- Does any candidate finding re-open a tradeoff in `DECIDED_TRADEOFFS.md`? (If yes, drop it.)
 - Did the implementation preserve behavior outside the intended scope?
 - Are there new bugs, regressions, race conditions, data-loss risks, security issues, or broken invariants?
 - Are tests meaningful, passing, and aimed at the risky paths?
 - Are docs, prompts, config, migrations, and shared data consumers still consistent?
 - Did the previous agent ignore runtime evidence, stale logs, permissions, deploy state, or environment constraints?
 - Did the implementation add unnecessary abstraction, scope creep, compatibility shims, or unrelated churn?
-- What must be fixed before commit, merge, or deploy?
+- **Asymmetric scope check:** if the user wanted the codebase to shrink, does the implementation actually shrink it? Did the previous agent re-add abstraction the user asked to remove?
+- What must be fixed before commit, merge, or deploy? Does this need a fix, or is it nice-to-have?
 
 ## Output Format
 
@@ -108,30 +275,47 @@ Use this structure:
 ## Verdict
 `SAFE TO COMMIT` | `SAFE TO DEPLOY AFTER RUNTIME CHECK` | `FIX FIRST` | `BLOCK` | `INSUFFICIENT EVIDENCE`
 
-A short verdict summary explaining the decision. The detail belongs in Findings below; this is only the headline. Brevity here does not imply a shallow review.
+A short verdict summary explaining the decision. The detail belongs below; this is only the headline. Brevity here does not imply a shallow review.
 
-## Findings
-### Finding 1: short title
-- Severity: `blocker` | `high` | `medium` | `low`
-- Status: `verified` | `plausible` | `needs-evidence`
+## Honest Self-Check
+- Would I personally `git commit` this code as-is? [yes/no, one sentence]
+- Would I block a teammate's commit at code review on this? [yes/no, one sentence]
+
+## Hard Blockers
+Findings ONLY if the answer to "would I block a teammate's commit" is yes.
+
+### Blocker 1: short title
+- Severity: `blocker` | `high`
+- Status: `verified` | `plausible`
 - Location: file, symbol, command, or runtime surface
 - Evidence: what was observed
 - Failure mode: how this could break
 - Required fix: what must change
 - Verification: how to prove the fix
+- User-intent check: this is NOT a re-proposal of anything in FORBIDDEN_FINDINGS.md.
 
-If there are no findings, write: "No confirmed findings." Then list residual verification gaps.
+If none: write "No hard blockers. Commit-ready relative to USER_INTENT.md."
+
+## Soft Suggestions
+Nice-to-have improvements that DO NOT block this commit. Each item is one line. No severity field — these are explicitly not blockers.
+
+## Scope And Intent Drift Check
+- Does this commit do MORE than `USER_INTENT.md` asked? [list, or "no"]
+- Does this commit do LESS than `USER_INTENT.md` asked? [list, or "no"]
+- Did this commit re-introduce something `FORBIDDEN_FINDINGS.md` rejected? [list, or "no"]
 
 ## Model Disagreements
-- What the critics disagreed about and which interpretation is best supported.
+What the critics disagreed about and which interpretation is best supported by `USER_INTENT.md` + the actual code.
 
 ## Checks Performed
-- Code/diff inspected.
-- Tests or commands considered.
-- Logs/runtime evidence considered.
+- Pre-flight files read: [list]
+- Whole files read: [list]
+- Diff inspected: yes/no
+- Tests considered: yes/no
+- Logs/runtime evidence considered: yes/no
 
 ## Follow-Up Prompt
-Copy-paste prompt for the implementation agent to fix or verify the accepted findings.
+Copy-paste prompt for the implementation agent to address the accepted findings.
 ```
 
 ## Follow-Up Prompt Template
@@ -139,15 +323,28 @@ Copy-paste prompt for the implementation agent to fix or verify the accepted fin
 Use this when handing review output back to the implementation agent:
 
 ```text
-Here is an independent adversarial review of your previous work. Do not assume it is correct. Re-open the code, diff, tests, logs, and user requirements. Verify each finding against the actual project state. Fix only the findings you can confirm. If a finding is wrong, explain why with evidence. If there are multiple reasonable fixes, ask before changing behavior.
+Here is an independent adversarial review of your previous work. Do not assume it is correct. Re-open the code, diff, tests, logs, and user requirements. Verify each finding against the actual project state. Fix only the Hard Blockers you can confirm. If a finding is wrong, explain why with evidence. If there are multiple reasonable fixes, ask before changing behavior. Do not act on Soft Suggestions unless the user explicitly asks for them.
 ```
 
-## Rules of Engagement
+## Rules Of Engagement
 
 - Prefer evidence over confidence.
-- `SAFE TO COMMIT` requires at minimum the task, relevant diff, and either relevant test results or a clear reason tests are unnecessary.
-- Use `INSUFFICIENT EVIDENCE` when the task, diff, or verification evidence is missing.
+- `SAFE TO COMMIT` requires at minimum: `USER_INTENT.md`, `DIFF.patch`, and either `TESTS.txt` or a clear reason tests are unnecessary, all present and non-empty.
+- Use `INSUFFICIENT EVIDENCE` when any mandatory pre-flight file is missing or empty.
 - Do not punish the previous agent for harmless style differences.
 - Do not expand scope unless the current change created a real risk.
 - Do not approve deployment based only on static code review when runtime restart, migrations, credentials, or live checks are required.
 - If critics disagree, investigate the disputed point directly before making the final call.
+- Adding code is not automatically better. If a finding asks the implementer to ADD a parser branch, abstraction, fallback, or sanitizer, justify it with a concrete reproducible failure mode. Otherwise drop the finding.
+- A long Soft Suggestions list is fine. A long Hard Blockers list is not. Hard Blockers are claims about whether this can ship — be conservative about counting them.
+
+## Why Files-On-Disk
+
+This skill writes context to `.adversarial-review/` because Cursor subagents cannot read parent chat. Putting context in files:
+
+- Survives chat compaction. Round-3 critics see the same `USER_INTENT.md` as round-1 critics.
+- Closes the "critic invented the user's intent" failure mode. Either the file is there or `INSUFFICIENT EVIDENCE` fires.
+- Lets the user audit what each critic was actually told. Open the directory, read the files.
+- Lets the user version the review state. Add `.adversarial-review/` to git, or to `.gitignore` if it should stay local — the choice is the user's, not the skill's.
+
+If you do not want `.adversarial-review/` checked into the repo, add it to `.gitignore` once.
