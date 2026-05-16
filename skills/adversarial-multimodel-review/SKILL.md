@@ -201,18 +201,28 @@ If the diff touches shared interfaces, use Cursor's built-in `explore` subagent 
 
 ### Step 4. Launch Critic Subagents In Parallel
 
-Launch in a single message with multiple Task tool calls:
+Launch in a single message with multiple Task tool calls. The named critic is not, by itself, proof that Cursor used a different model: Cursor's documented subagent default is `model: inherit`, and configured model requests can fall back when a model is unavailable, blocked by team policy, or requires Max Mode.
 
-- `gemini-critic` for broad-context alternative reasoning.
-- `gpt-critic` for rigorous implementation and regression review.
-- `opus-critic` for deep architectural and intent review.
-- `inherit-critic` when exact model IDs are unavailable, Max Mode is off, or the user has selected a specific parent model.
+Required critic routes:
+
+- `gemini-critic` for broad-context alternative reasoning, configured to request `gemini-3-1-pro`.
+- `gpt-critic` for rigorous implementation and regression review, configured to request `gpt-5-5`.
+- `opus-critic` for deep architectural and intent review, configured to request `claude-opus-4-7`.
+- `inherit-critic` only when exact model IDs are unavailable, Max Mode is off, or the user has selected a specific parent model.
+
+Model-routing guard:
+
+1. Prefer invoking the critic agents whose frontmatter requests the model above. If your Cursor tool exposes an explicit per-call `model` field, pass the matching model ID there too.
+2. Before synthesizing, inspect the visible tool-call metadata, subagent transcript metadata, or any available Cursor UI/runtime evidence for the model each critic actually used.
+3. Record both the intended critic route and the observed model evidence in the final `Model Diversity Check` section.
+4. If model evidence is unavailable, say so explicitly and classify the run as `model diversity unverified`.
+5. If two or more named critics are observed using the same parent model, do NOT call the result true multi-model review. Either relaunch with verified distinct models, use `inherit-critic` as an explicit same-model fallback, or return `INSUFFICIENT EVIDENCE` for a request that specifically required multi-model review.
 
 Each critic prompt should be **short**. Do not duplicate the evidence packet inline. The prompt should:
 
 1. Point at `.adversarial-review/` and require the critic to read its mandatory pre-flight files.
 2. Name the target decision (commit / merge / deploy / continue iteration).
-3. Name any known limitations (stale logs, runtime not restarted, missing credentials).
+3. Name any known limitations (stale logs, runtime not restarted, missing credentials, or model diversity unverified).
 
 Example critic prompt:
 
@@ -240,6 +250,7 @@ Apply your normal checklist. Drop any finding that re-proposes an approach in FO
 - Merge duplicate findings.
 - Highlight disagreements and decide which side has better evidence.
 - Separate `Hard Blockers` (would block teammate's commit at code review) from `Soft Suggestions` (nice-to-have, not commit-blocking).
+- Classify the review run as one of: `verified multi-model`, `model diversity unverified`, or `same-model fallback`; do not imply more model independence than the evidence supports.
 - Increment `.adversarial-review/round.txt`.
 
 ### Step 6. Return The Final Readiness Decision
@@ -304,6 +315,12 @@ Nice-to-have improvements that DO NOT block this commit. Each item is one line. 
 - Does this commit do LESS than `USER_INTENT.md` asked? [list, or "no"]
 - Did this commit re-introduce something `FORBIDDEN_FINDINGS.md` rejected? [list, or "no"]
 
+## Model Diversity Check
+- Intended critic routes: [critic name -> configured/requested model]
+- Observed model evidence: [actual model evidence from tool metadata/transcripts/UI, or "unavailable"]
+- Classification: `verified multi-model` | `model diversity unverified` | `same-model fallback`
+- If not verified multi-model: explain whether the verdict still stands as same-model multi-perspective review, or return `INSUFFICIENT EVIDENCE` when true multi-model review was required.
+
 ## Model Disagreements
 What the critics disagreed about and which interpretation is best supported by `USER_INTENT.md` + the actual code.
 
@@ -330,7 +347,7 @@ Here is an independent adversarial review of your previous work. Do not assume i
 
 - Prefer evidence over confidence.
 - `SAFE TO COMMIT` requires at minimum: `USER_INTENT.md`, `DIFF.patch`, and either `TESTS.txt` or a clear reason tests are unnecessary, all present and non-empty.
-- Use `INSUFFICIENT EVIDENCE` when any mandatory pre-flight file is missing or empty.
+- Use `INSUFFICIENT EVIDENCE` when any mandatory pre-flight file is missing or empty, or when the user specifically requested multi-model review and model diversity cannot be verified or was observed to collapse to one parent model.
 - Do not punish the previous agent for harmless style differences.
 - Do not expand scope unless the current change created a real risk.
 - Do not approve deployment based only on static code review when runtime restart, migrations, credentials, or live checks are required.
