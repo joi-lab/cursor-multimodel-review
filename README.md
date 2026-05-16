@@ -72,9 +72,9 @@ Then run **Developer: Reload Window**.
 - Skill: `adversarial-multimodel-review`
 - Command: `/mm-review`
 - Read-only critics:
-  - `gemini-critic` requests `gemini-3-1-pro`
-  - `gpt-critic` requests `gpt-5-5`
-  - `opus-critic` requests `claude-opus-4-7`
+  - `gemini-critic` is configured to request `gemini-3-1-pro`
+  - `gpt-critic` is configured to request `gpt-5-5`
+  - `opus-critic` is configured to request `claude-opus-4-7`
   - `inherit-critic` inherits the parent model
 
 ## How Context Reaches Critics
@@ -115,27 +115,38 @@ The skill asks the parent agent to return one of these verdicts:
 
 ## Models And Max Mode
 
-The plugin requests these models:
+The critic agents are configured with these model requests:
 
 ```yaml
+# agents/gemini-critic.md
 model: gemini-3-1-pro
+
+# agents/gpt-critic.md
 model: gpt-5-5
+
+# agents/opus-critic.md
 model: claude-opus-4-7
 ```
 
-Cursor may fall back if a model is unavailable on your plan, region, team policy, or Max Mode settings.
+Cursor's subagent docs say the `model` field defaults to `inherit`, meaning the subagent uses the parent agent's model unless a specific model is configured. The docs also say Cursor can override or fall back from a configured model when the model is blocked by team policy, requires Max Mode, or is unavailable on the current plan.
 
-> **Honest disclaimer.** If your Cursor plan does not include `gemini-3-1-pro`, `gpt-5-5`, and `claude-opus-4-7`, or Max Mode is off, the named critics **silently fall back to the parent model**. In that case all three critics run on the same model, and the multi-model premise dissolves — you get one model with three different system prompts, not three independent perspectives. If you cannot verify your Cursor plan covers all three model IDs in Max Mode, use 2–3 invocations of `inherit-critic` with different review angles instead, or enable Max Mode.
+Because of that, a critic name is not proof of model routing. A valid multi-model synthesis must include a **Model Diversity Check**:
+
+1. Intended route: which critic was launched and which model it was configured or explicitly requested to use.
+2. Observed evidence: tool-call metadata, subagent transcript metadata, Cursor UI/runtime evidence, or an explicit note that no model evidence was available.
+3. Classification: `verified multi-model`, `model diversity unverified`, or `same-model fallback`.
+
+If your transcript shows all named critics using the parent model, treat the result as same-model multi-perspective review, not true multi-model review. If the user specifically asked for multi-model review and model diversity cannot be verified, return `INSUFFICIENT EVIDENCE` or relaunch with verified distinct models.
 
 Cursor's documented subagent frontmatter does **not** include separate `reasoning_effort`, `max_tokens`, or `context_length` fields. This plugin asks critics to use the maximum available effort/context in their prompts. For the biggest context window, turn on **Max Mode** in Cursor before running the review.
 
-Use `inherit-critic` when you want the critic to inherit the exact parent model and Max Mode state, or as the reliable fallback when named models are blocked.
+Use `inherit-critic` when you want the critic to inherit the exact parent model and Max Mode state, or as the reliable fallback when named models are blocked and the user accepts same-model fallback.
 
 ## Known Limitations
 
 - This uses more tokens and takes longer than normal review.
 - Subagents start with clean context — see the **How Context Reaches Critics** section above for the `.adversarial-review/` files the parent must write so critics have anything to work with.
-- Exact model IDs can change or be unavailable. Without Max Mode, named critics silently fall back to the parent model. Keep `inherit-critic` as the stable fallback.
+- Exact model IDs can change or be unavailable. Always report whether model diversity was verified; if named critics collapse to the parent model, the result is same-model multi-perspective review. Keep `inherit-critic` as the stable fallback when that is intentional.
 - The skill slash form `/adversarial-multimodel-review` depends on Cursor 2.4+ skill discovery. Use `/mm-review` if the skill slash entry is not visible.
 - Static review cannot prove deployment safety. If runtime was not restarted or logs are stale, require a runtime check.
 - Open-ended adversarial critique on a constantly-changing diff has no natural stopping point. The skill caps automatic critic rounds at 2 per scope-stable commit and escalates to the user before round 3.

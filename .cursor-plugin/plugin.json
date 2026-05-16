@@ -1,7 +1,7 @@
 {
   "name": "adversarial-multimodel-review",
-  "description": "Always-on deep, full-context adversarial review. Coordinates independent critic subagents requesting different models to verify agent work before commit or deployment. The parent agent writes a structured evidence packet to `.adversarial-review/` (user intent quotes, rejected approaches, accepted plan, diff, tests) that critics MUST read before producing findings, since Cursor subagents cannot see parent chat history.",
-  "version": "0.2.0",
+  "description": "Always-on deep, full-context adversarial review. Coordinates independent critic subagents configured to request different models, then requires the parent agent to verify model diversity before presenting the review as true multi-model. The parent agent writes a structured evidence packet to `.adversarial-review/` (user intent quotes, rejected approaches, accepted plan, diff, tests) that critics MUST read before producing findings, since Cursor subagents cannot see parent chat history.",
+  "version": "0.2.1",
   "author": {
     "name": "Anton Razzhigaev"
   },
