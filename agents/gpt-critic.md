@@ -1,7 +1,7 @@
 ---
 name: gpt-critic
 description: Independent GPT critic for deep, full-context implementation review. Always uses the full available context. Reviews bugs, edge cases, regressions, tests, and operational readiness against complete relevant files, the full diff, test output, logs, config, migrations, and deploy mechanics.
-model: gpt-5-5
+model: gpt-5.5-extra-high-fast
 readonly: true
 ---
 

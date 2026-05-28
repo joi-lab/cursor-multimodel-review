@@ -1,7 +1,7 @@
 ---
 name: gemini-critic
 description: Independent Gemini critic for deep, full-context adversarial review. Always uses the full available context. Reviews task fit, cross-file consistency, missed requirements, and scope creep against complete relevant files, the full diff, docs, rules, prompts, configs, and downstream consumers.
-model: gemini-3-1-pro
+model: gemini-3.1-pro
 readonly: true
 ---
 

@@ -72,9 +72,9 @@ Then run **Developer: Reload Window**.
 - Skill: `adversarial-multimodel-review`
 - Command: `/mm-review`
 - Read-only critics:
-  - `gemini-critic` is configured to request `gemini-3-1-pro`
-  - `gpt-critic` is configured to request `gpt-5-5`
-  - `opus-critic` is configured to request `claude-opus-4-7`
+  - `gemini-critic` is configured to request `gemini-3.1-pro`
+  - `gpt-critic` is configured to request `gpt-5.5-extra-high-fast`
+  - `opus-critic` is configured to request `claude-opus-4-8-thinking-max`
   - `inherit-critic` inherits the parent model
 
 ## How Context Reaches Critics
@@ -119,16 +119,20 @@ The critic agents are configured with these model requests:
 
 ```yaml
 # agents/gemini-critic.md
-model: gemini-3-1-pro
+model: gemini-3.1-pro
 
 # agents/gpt-critic.md
-model: gpt-5-5
+model: gpt-5.5-extra-high-fast
 
 # agents/opus-critic.md
-model: claude-opus-4-7
+model: claude-opus-4-8-thinking-max
 ```
 
-Cursor's subagent docs say the `model` field defaults to `inherit`, meaning the subagent uses the parent agent's model unless a specific model is configured. The docs also say Cursor can override or fall back from a configured model when the model is blocked by team policy, requires Max Mode, or is unavailable on the current plan.
+> **Keep these slugs in sync with your Cursor model picker.** The `model` value must match a model identifier Cursor currently exposes in its picker (dotted versions like `gemini-3.1-pro` / `gpt-5.5...`, and the thinking/effort variant for Claude). Model names rotate over time. If the slug is unrecognized, Cursor does **not** error — it silently clones the parent model, so every named critic runs the parent model and the multi-model premise collapses. The slugs above are current as of 2026-05; re-check them against your picker after Cursor or model updates, and confirm diversity via the Model Diversity Check.
+
+**Primary mechanism: resolve models at runtime.** Because slugs rotate and a stale slug silently clones the parent, the skill's primary path is not the static frontmatter above. At review time it tells the parent agent to read the model identifiers your environment exposes *right now* — your Task tool's `model` options or Cursor's model picker — and pick one strong model from each **distinct** provider (a current OpenAI model → `gpt-critic`, a current Google Gemini model → `gemini-critic`, a current Anthropic Claude model → `opus-critic`), passing each as an explicit per-call `model`. This live resolution is the closest thing Cursor has to a durable `gpt-latest`-style alias: there are **no** provider-level "latest" aliases (`inherit`, `fast`, and `auto` are the only stable tokens, and all three collapse provider diversity). The frontmatter slugs are kept current only as fallback defaults for when an explicit per-call `model` is not available.
+
+Cursor's subagent docs say the `model` field defaults to `inherit`, meaning the subagent uses the parent agent's model unless a specific model is configured. The docs also say Cursor can override or fall back from a configured model when the model is blocked by team policy, requires Max Mode, or is unavailable on the current plan. On legacy request-based plans the Task tool's `model` parameter may be restricted to `fast`; in that case use the `inherit-critic` fallback (2-3 perspectives) and classify the run as `model diversity unverified`.
 
 Because of that, a critic name is not proof of model routing. A valid multi-model synthesis must include a **Model Diversity Check**:
 
@@ -150,3 +154,15 @@ Use `inherit-critic` when you want the critic to inherit the exact parent model 
 - The skill slash form `/adversarial-multimodel-review` depends on Cursor 2.4+ skill discovery. Use `/mm-review` if the skill slash entry is not visible.
 - Static review cannot prove deployment safety. If runtime was not restarted or logs are stale, require a runtime check.
 - Open-ended adversarial critique on a constantly-changing diff has no natural stopping point. The skill caps automatic critic rounds at 2 per scope-stable commit and escalates to the user before round 3.
+
+## Changelog
+
+### 0.3.0
+
+- **Durable model diversity.** The skill now resolves critic models at runtime: it picks one strong model from each distinct provider (OpenAI / Google / Anthropic) from the model list the environment currently exposes, and passes each as an explicit per-call `model`. This survives Cursor model-slug rotation, which previously made every critic silently clone the parent model.
+- Updated the static frontmatter slugs to current-valid identifiers (`gpt-5.5-extra-high-fast`, `gemini-3.1-pro`, `claude-opus-4-8-thinking-max`) and re-scoped them as fallback defaults rather than the authoritative route.
+- Documented that Cursor has no provider-level "latest" alias, that an unrecognized slug clones the parent instead of erroring, and the request-based-plan `fast` restriction with its `inherit-critic` fallback.
+
+### 0.2.x
+
+- Files-on-disk evidence packet (`.adversarial-review/`), mandatory critic pre-flight, Hard Blockers vs Soft Suggestions, round cap, and the Model Diversity Check.
