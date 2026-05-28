@@ -74,7 +74,7 @@ Then run **Developer: Reload Window**.
 - Read-only critics:
   - `gemini-critic` is configured to request `gemini-3.1-pro`
   - `gpt-critic` is configured to request `gpt-5.5-extra-high-fast`
-  - `opus-critic` is configured to request `claude-opus-4-8-thinking-max`
+  - `opus-critic` is configured to request `claude-opus-4-8-thinking-max-fast`
   - `inherit-critic` inherits the parent model
 
 ## How Context Reaches Critics
@@ -125,7 +125,7 @@ model: gemini-3.1-pro
 model: gpt-5.5-extra-high-fast
 
 # agents/opus-critic.md
-model: claude-opus-4-8-thinking-max
+model: claude-opus-4-8-thinking-max-fast
 ```
 
 > **Keep these slugs in sync with your Cursor model picker.** The `model` value must match a model identifier Cursor currently exposes in its picker (dotted versions like `gemini-3.1-pro` / `gpt-5.5...`, and the thinking/effort variant for Claude). Model names rotate over time. If the slug is unrecognized, Cursor does **not** error — it silently clones the parent model, so every named critic runs the parent model and the multi-model premise collapses. The slugs above are current as of 2026-05; re-check them against your picker after Cursor or model updates, and confirm diversity via the Model Diversity Check.
@@ -160,7 +160,7 @@ Use `inherit-critic` when you want the critic to inherit the exact parent model 
 ### 0.3.0
 
 - **Durable model diversity.** The skill now resolves critic models at runtime: it picks one strong model from each distinct provider (OpenAI / Google / Anthropic) from the model list the environment currently exposes, and passes each as an explicit per-call `model`. This survives Cursor model-slug rotation, which previously made every critic silently clone the parent model.
-- Updated the static frontmatter slugs to current-valid identifiers (`gpt-5.5-extra-high-fast`, `gemini-3.1-pro`, `claude-opus-4-8-thinking-max`) and re-scoped them as fallback defaults rather than the authoritative route.
+- Updated the static frontmatter slugs to current-valid identifiers (`gpt-5.5-extra-high-fast`, `gemini-3.1-pro`, `claude-opus-4-8-thinking-max-fast`) and re-scoped them as fallback defaults rather than the authoritative route.
 - Documented that Cursor has no provider-level "latest" alias, that an unrecognized slug clones the parent instead of erroring, and the request-based-plan `fast` restriction with its `inherit-critic` fallback.
 
 ### 0.2.x

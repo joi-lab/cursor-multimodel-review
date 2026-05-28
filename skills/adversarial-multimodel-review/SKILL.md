@@ -220,6 +220,7 @@ Model version strings rotate over time, and Cursor does **not** error on an unre
    - one Google Gemini model (a current Gemini Pro) → `gemini-critic`
    - one Anthropic Claude model (a current Opus) → `opus-critic`
 3. Pass each resolved model as the explicit per-call `model` argument when you launch that critic. This explicit per-call path is the reliable one; a critic's frontmatter slug is only a fallback default that can silently clone the parent once it goes stale.
+4. The per-call `model` argument is validated: if you pass an unrecognized slug, Cursor returns an error listing the allowed subagent model slugs — use that returned list to self-correct and re-launch. The frontmatter path has no such signal; an unknown slug there silently clones the parent. This is the decisive reason to prefer the per-call path.
 
 The static frontmatter slugs in `agents/*.md` are kept current as fallback defaults, but treat them as examples, not as the authoritative version — re-resolve against the live model list each run.
 
