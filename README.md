@@ -72,7 +72,7 @@ Then run **Developer: Reload Window**.
 - Skill: `adversarial-multimodel-review`
 - Command: `/mm-review`
 - Read-only critics:
-  - `gemini-critic` is configured to request `gemini-3.5-flash`
+  - `gemini-critic` is configured to request `gemini-3.1-pro`
   - `gpt-critic` is configured to request `gpt-5.5-extra-high-fast`
   - `opus-critic` is configured to request `claude-opus-4-8-thinking-max-fast`
   - `inherit-critic` inherits the parent model
@@ -119,7 +119,7 @@ The critic agents are configured with these model requests:
 
 ```yaml
 # agents/gemini-critic.md
-model: gemini-3.5-flash
+model: gemini-3.1-pro
 
 # agents/gpt-critic.md
 model: gpt-5.5-extra-high-fast
@@ -128,7 +128,7 @@ model: gpt-5.5-extra-high-fast
 model: claude-opus-4-8-thinking-max-fast
 ```
 
-> **Keep these slugs in sync with your Cursor model picker.** The `model` value must match a model identifier Cursor currently exposes in its picker (dotted versions like `gemini-3.5-flash` / `gpt-5.5...`, and the thinking/effort variant for Claude). Model names rotate over time. If the slug is unrecognized, Cursor does **not** error — it silently clones the parent model, so every named critic runs the parent model and the multi-model premise collapses. The slugs above are current as of 2026-05; re-check them against your picker after Cursor or model updates, and confirm diversity via the Model Diversity Check.
+> **Keep these slugs in sync with your Cursor model picker.** The `model` value must match a model identifier Cursor currently exposes in its picker (dotted versions like `gemini-3.1-pro` / `gpt-5.5...`, and the thinking/effort variant for Claude). Model names rotate over time. If the slug is unrecognized, Cursor does **not** error — it silently clones the parent model, so every named critic runs the parent model and the multi-model premise collapses. The slugs above are current as of 2026-05; re-check them against your picker after Cursor or model updates, and confirm diversity via the Model Diversity Check.
 
 **Primary mechanism: resolve models at runtime.** Because slugs rotate and a stale slug silently clones the parent, the skill's primary path is not the static frontmatter above. At review time it tells the parent agent to read the model identifiers your environment exposes *right now* — your Task tool's `model` options or Cursor's model picker — and pick one strong model from each **distinct** provider (a current OpenAI model → `gpt-critic`, a current Google Gemini model → `gemini-critic`, a current Anthropic Claude model → `opus-critic`), passing each as an explicit per-call `model`. This live resolution is the closest thing Cursor has to a durable `gpt-latest`-style alias: there are **no** provider-level "latest" aliases (`inherit`, `fast`, and `auto` are the only stable tokens, and all three collapse provider diversity). The frontmatter slugs are kept current only as fallback defaults for when an explicit per-call `model` is not available.
 
@@ -156,6 +156,10 @@ Use `inherit-critic` when you want the critic to inherit the exact parent model 
 - Open-ended adversarial critique on a constantly-changing diff has no natural stopping point. The skill caps automatic critic rounds at 2 per scope-stable commit and escalates to the user before round 3.
 
 ## Changelog
+
+### 0.3.2
+
+- Reverted the `gemini-critic` slug to `gemini-3.1-pro`. For adversarial review the Pro tier is a materially stronger reviewer than `gemini-3.5-flash`, and Cursor exposes no `gemini-3.5-pro` slug. `gpt-critic` (`gpt-5.5-extra-high-fast`) and `opus-critic` (`claude-opus-4-8-thinking-max-fast`) remain the strongest per-provider critics available.
 
 ### 0.3.1
 
