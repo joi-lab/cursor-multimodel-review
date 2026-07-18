@@ -1,6 +1,6 @@
 ---
 name: adversarial-multimodel-review
-description: Runs a deep, full-context adversarial multi-model review of previous agent work. Always optimizes for correctness over speed, cost, and brevity. Use when the user wants independent verification before commit, merge, or deployment, when checking for bugs, regressions, or scope creep, or when getting Gemini, GPT, or Opus critic opinions.
+description: Runs a deep, full-context adversarial multi-model review of previous agent work. Always optimizes for correctness over speed, cost, and brevity. Use when the user wants independent verification before commit, merge, or deployment, when checking for bugs, regressions, or scope creep, or when getting Gemini, GPT, Claude, or Grok critic opinions.
 license: MIT
 ---
 
@@ -36,7 +36,7 @@ Apply this skill when the user asks things like:
 - "Can we deploy this?"
 - "Run a multimodel review."
 - "Check for bugs, regressions, or scope creep."
-- "Get Gemini/GPT/Opus to review this independently."
+- "Get Gemini/GPT/Opus/Grok to review this independently."
 
 ## Default Review Behavior
 
@@ -213,18 +213,18 @@ Required critic routes (one strong model per distinct provider):
 
 #### Resolve critic models at runtime (primary path)
 
-Model version strings rotate over time, and Cursor does **not** error on an unrecognized `model` slug — it silently clones the parent model, which collapses every critic onto one model and destroys the multi-model premise. So do not rely on memorized or hardcoded version numbers. Instead, at review time:
+Model version strings rotate over time, and a stale or restricted frontmatter `model` does **not** surface as an error — Cursor falls back to a compatible model without telling you (per the subagent docs, a configured model is honored unless team-admin restrictions, plan limitations, or a legacy Max Mode requirement apply; on legacy request-based plans without Max Mode, subagents run Composer regardless of any `model` configuration). Any silent fallback collapses critics onto one model and destroys the multi-model premise. So do not rely on memorized or hardcoded version numbers. Instead, at review time:
 
-1. Inspect the model identifiers your current environment actually exposes **right now** — the `model` values your Task tool accepts, or the entries in Cursor's model picker. This live list is your source of truth, and the closest thing Cursor has to a durable `gpt-latest`-style alias.
+1. Inspect the model identifiers your current environment actually exposes **right now** — the `model` values your Task tool accepts, or the entries in Cursor's model picker. This live list is your source of truth for per-call routing. (For frontmatter, Cursor also accepts general model names like `model: opus`, which track the newest model in a family and resist slug rotation — but they still collapse silently under plan/team restrictions, so runtime verification stays mandatory.)
 2. Pick one strong model from each **distinct** provider (aim for all four; three is the minimum for true multi-model):
    - one OpenAI model (a current GPT) → `gpt-critic`
    - one Google Gemini model (a current Gemini) → `gemini-critic`
    - one Anthropic Claude model (a current Opus/Fable) → `opus-critic`
    - one xAI Grok model (a current Grok) → `grok-critic`
-3. Pass each resolved model as the explicit per-call `model` argument when you launch that critic. This explicit per-call path is the reliable one; a critic's frontmatter slug is only a fallback default that can silently clone the parent once it goes stale.
-4. The per-call `model` argument is validated: if you pass an unrecognized slug, Cursor returns an error listing the allowed subagent model slugs — use that returned list to self-correct and re-launch. The frontmatter path has no such signal; an unknown slug there silently clones the parent. This is the decisive reason to prefer the per-call path.
+3. Pass each resolved model as the explicit per-call `model` argument when you launch that critic. This explicit per-call path is the reliable one; a critic's frontmatter slug is only a fallback default that can silently fall back once it goes stale or gets restricted.
+4. The per-call `model` argument is validated: if you pass an unrecognized slug, Cursor returns an error listing the allowed subagent model slugs — use that returned list to self-correct and re-launch. The frontmatter path has no such signal: an unknown or restricted model there silently falls back to a compatible model (typically the parent or Composer). This is the decisive reason to prefer the per-call path.
 
-The static frontmatter slugs in `agents/*.md` are kept current as fallback defaults, but treat them as examples, not as the authoritative version — re-resolve against the live model list each run.
+The static frontmatter slugs in `agents/*.md` are kept current as fallback defaults, but treat them as examples, not as the authoritative version — re-resolve against the live model list each run. Frontmatter model IDs also accept bracket parameters (for example `claude-opus-4-8[effort=high,context=300k]`) to pin reasoning effort and context window when your environment supports them.
 
 Model-routing guard:
 
@@ -232,7 +232,7 @@ Model-routing guard:
 2. Before synthesizing, inspect the visible tool-call metadata, subagent transcript metadata, or any available Cursor UI/runtime evidence for the model each critic actually used.
 3. Record both the intended critic route (resolved model + provider) and the observed model evidence in the final `Model Diversity Check` section.
 4. If model evidence is unavailable, say so explicitly and classify the run as `model diversity unverified`.
-5. If you cannot obtain at least three distinct providers — the picker is limited, the plan restricts subagents to `fast`, or region/Max Mode blocks a model — or if two or more named critics are observed using the same parent model, do NOT call the result true multi-model review. Either relaunch with verified distinct models, use 2-3 `inherit-critic` invocations with different perspectives as an explicit same-model fallback, or return `INSUFFICIENT EVIDENCE` for a request that specifically required multi-model review.
+5. If you cannot obtain at least three distinct providers — the picker is limited, the plan restricts subagents to `fast`/Composer, or region/Max Mode blocks a model — or if the observed models cover fewer than three distinct providers (for example, several named critics collapsed onto the parent model), do NOT call the result true multi-model review. Either relaunch with verified distinct models, use 2-4 `inherit-critic` invocations with different perspectives as an explicit same-model fallback, or return `INSUFFICIENT EVIDENCE` for a request that specifically required multi-model review.
 
 Each critic prompt should be **short**. Do not duplicate the evidence packet inline. The prompt should:
 

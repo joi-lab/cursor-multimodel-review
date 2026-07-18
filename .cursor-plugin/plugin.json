@@ -1,7 +1,7 @@
 {
   "name": "adversarial-multimodel-review",
   "description": "Always-on deep, full-context adversarial review. Coordinates independent critic subagents, resolving one strong model per distinct provider (OpenAI/Google/Anthropic/xAI) at runtime so reviews stay multi-model as Cursor model slugs rotate, then requires the parent agent to verify model diversity before presenting the review as true multi-model. The parent agent writes a structured evidence packet to `.adversarial-review/` (user intent quotes, rejected approaches, accepted plan, diff, tests) that critics MUST read before producing findings, since Cursor subagents cannot see parent chat history.",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "author": {
     "name": "Anton Razzhigaev"
   },
