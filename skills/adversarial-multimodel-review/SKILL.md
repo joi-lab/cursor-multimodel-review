@@ -208,17 +208,19 @@ Required critic routes (one strong model per distinct provider):
 - `gpt-critic` for rigorous implementation and regression review — an OpenAI model.
 - `gemini-critic` for broad-context alternative reasoning — a Google Gemini model.
 - `opus-critic` for deep architectural and intent review — an Anthropic Claude model.
-- `inherit-critic` only when three distinct provider models cannot be obtained (see the fallback in the routing guard below).
+- `grok-critic` for contrarian red-team review of assumptions, security, and failure modes — an xAI Grok model.
+- `inherit-critic` only when distinct provider models cannot be obtained (see the fallback in the routing guard below).
 
 #### Resolve critic models at runtime (primary path)
 
 Model version strings rotate over time, and Cursor does **not** error on an unrecognized `model` slug — it silently clones the parent model, which collapses every critic onto one model and destroys the multi-model premise. So do not rely on memorized or hardcoded version numbers. Instead, at review time:
 
 1. Inspect the model identifiers your current environment actually exposes **right now** — the `model` values your Task tool accepts, or the entries in Cursor's model picker. This live list is your source of truth, and the closest thing Cursor has to a durable `gpt-latest`-style alias.
-2. Pick one strong model from each of three **distinct** providers:
+2. Pick one strong model from each **distinct** provider (aim for all four; three is the minimum for true multi-model):
    - one OpenAI model (a current GPT) → `gpt-critic`
-   - one Google Gemini model (a current Gemini Pro) → `gemini-critic`
-   - one Anthropic Claude model (a current Opus) → `opus-critic`
+   - one Google Gemini model (a current Gemini) → `gemini-critic`
+   - one Anthropic Claude model (a current Opus/Fable) → `opus-critic`
+   - one xAI Grok model (a current Grok) → `grok-critic`
 3. Pass each resolved model as the explicit per-call `model` argument when you launch that critic. This explicit per-call path is the reliable one; a critic's frontmatter slug is only a fallback default that can silently clone the parent once it goes stale.
 4. The per-call `model` argument is validated: if you pass an unrecognized slug, Cursor returns an error listing the allowed subagent model slugs — use that returned list to self-correct and re-launch. The frontmatter path has no such signal; an unknown slug there silently clones the parent. This is the decisive reason to prefer the per-call path.
 
@@ -226,11 +228,11 @@ The static frontmatter slugs in `agents/*.md` are kept current as fallback defau
 
 Model-routing guard:
 
-1. Primary: launch each critic with an explicit, runtime-resolved per-call `model` from a distinct provider (OpenAI / Google / Anthropic). If your tool does not expose a per-call `model` field, fall back to the critic's frontmatter slug, knowing it may be stale.
+1. Primary: launch each critic with an explicit, runtime-resolved per-call `model` from a distinct provider (OpenAI / Google / Anthropic / xAI). If your tool does not expose a per-call `model` field, fall back to the critic's frontmatter slug, knowing it may be stale.
 2. Before synthesizing, inspect the visible tool-call metadata, subagent transcript metadata, or any available Cursor UI/runtime evidence for the model each critic actually used.
 3. Record both the intended critic route (resolved model + provider) and the observed model evidence in the final `Model Diversity Check` section.
 4. If model evidence is unavailable, say so explicitly and classify the run as `model diversity unverified`.
-5. If you cannot obtain three distinct providers — the picker is limited, the plan restricts subagents to `fast`, or region/Max Mode blocks a model — or if two or more named critics are observed using the same parent model, do NOT call the result true multi-model review. Either relaunch with verified distinct models, use 2-3 `inherit-critic` invocations with different perspectives as an explicit same-model fallback, or return `INSUFFICIENT EVIDENCE` for a request that specifically required multi-model review.
+5. If you cannot obtain at least three distinct providers — the picker is limited, the plan restricts subagents to `fast`, or region/Max Mode blocks a model — or if two or more named critics are observed using the same parent model, do NOT call the result true multi-model review. Either relaunch with verified distinct models, use 2-3 `inherit-critic` invocations with different perspectives as an explicit same-model fallback, or return `INSUFFICIENT EVIDENCE` for a request that specifically required multi-model review.
 
 Each critic prompt should be **short**. Do not duplicate the evidence packet inline. The prompt should:
 
