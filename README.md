@@ -72,10 +72,10 @@ Then run **Developer: Reload Window**.
 - Skill: `adversarial-multimodel-review`
 - Command: `/mm-review`
 - Read-only critics:
-  - `gemini-critic` is configured to request `gemini-3.5-flash`
-  - `gpt-critic` is configured to request `gpt-5.6-sol-max`
-  - `opus-critic` is configured to request `fable-5-max`
-  - `grok-critic` is configured to request `grok-4.5-high`
+  - `gemini-critic` is configured to request `gemini-3.5-flash[context=1m]`
+  - `gpt-critic` is configured to request `gpt-5.6-sol-max[context=1m]`
+  - `opus-critic` is configured to request `fable-5-max[context=1m]`
+  - `grok-critic` is configured to request `grok-4.5-high` (Cursor caps Grok 4.5 at 256k context, so no 1m bracket)
   - `inherit-critic` inherits the parent model
 
 ## How Context Reaches Critics
@@ -120,17 +120,19 @@ The critic agents are configured with these model requests:
 
 ```yaml
 # agents/gemini-critic.md
-model: gemini-3.5-flash
+model: gemini-3.5-flash[context=1m]
 
 # agents/gpt-critic.md
-model: gpt-5.6-sol-max
+model: gpt-5.6-sol-max[context=1m]
 
 # agents/opus-critic.md
-model: fable-5-max
+model: fable-5-max[context=1m]
 
 # agents/grok-critic.md
 model: grok-4.5-high
 ```
+
+The `[context=1m]` bracket parameter requests the 1M-token context window on the three models whose providers support it (GPT-5.6 Sol and the Claude line document 1M long context; Gemini 3.5 Flash is natively 1M). Grok 4.5 is capped at 256k context inside Cursor (confirmed by the Cursor team, July 2026), so `grok-critic` carries no context bracket. Note the cost impact: long context is expensive (e.g. GPT-5.6 Sol bills 2x input above the standard window), which is consistent with this plugin's intentionally-expensive design. If your environment rejects the bracket form, strip it — the bare slug is the safe fallback.
 
 > **Keep these slugs in sync with your Cursor model picker.** The `model` value must match a model identifier Cursor currently exposes in its picker. Model names rotate over time. If the slug is unrecognized or restricted, Cursor does **not** error — it silently falls back to a compatible model (typically the parent model, or Composer on legacy request-based plans without Max Mode), so named critics can quietly collapse onto one model and the multi-model premise dissolves. The slugs above are current as of 2026-07; re-check them against your picker after Cursor or model updates, and confirm diversity via the Model Diversity Check. Cursor also accepts general model names in frontmatter (e.g. `model: opus` tracks the newest Opus) and bracket parameters (e.g. `claude-opus-4-8[effort=high,context=300k]`); general names resist slug rotation but still collapse silently under plan/team restrictions.
 
@@ -160,6 +162,11 @@ Use `inherit-critic` when you want the critic to inherit the exact parent model 
 - Open-ended adversarial critique on a constantly-changing diff has no natural stopping point. The skill caps automatic critic rounds at 2 per scope-stable commit and escalates to the user before round 3.
 
 ## Changelog
+
+### 0.4.2
+
+- Request the 1M-token context window via bracket parameters on every critic whose provider supports it: `gpt-5.6-sol-max[context=1m]`, `fable-5-max[context=1m]`, `gemini-3.5-flash[context=1m]`. `grok-critic` stays at the bare slug — Cursor caps Grok 4.5 at 256k context (confirmed by the Cursor team, July 2026).
+- The skill now tells the parent agent to prefer the largest available context variant during runtime model resolution as well.
 
 ### 0.4.1
 

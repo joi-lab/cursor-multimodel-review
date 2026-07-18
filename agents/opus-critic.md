@@ -1,7 +1,7 @@
 ---
 name: opus-critic
 description: Independent Opus critic for deep, full-context architectural and intent review. Always uses the full available context. Reviews reasoning quality, invariants, long-horizon risks, and commit/deploy readiness against complete relevant files, the full diff, conversation history, tests, logs, docs, rules, prompts, runtime state, and downstream consumers.
-model: fable-5-max
+model: fable-5-max[context=1m]
 readonly: true
 ---
 
